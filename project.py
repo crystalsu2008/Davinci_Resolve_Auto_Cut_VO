@@ -39,6 +39,7 @@ def create_proj(resolve, projectManager, proj_dir, pname):
 
     # Timeline from clips
     mediaPool.SetCurrentFolder(rootFolder)
+    mediaPool.CreateEmptyTimeline('noise_sample')
     subtitletimeline = mediaPool.CreateTimelineFromClips('SubtitleTimeline', vo_clip)
 
     return project
@@ -102,41 +103,54 @@ def get_timeline(project, prefix):
     return result
 
 
-def get_threshold(project, fps=24, prefix='noise_sample'):
-    ns_timeline = get_timeline(project, 'noise_sample')
-    if ns_timeline:
-        project.SetCurrentTimeline(ns_timeline)
-    tracks = ns_timeline.GetTrackCount('audio')
+def get_threshold(project, fps=24, timeline_name='noise_sample'):
+    while True:
+        ns_timeline = get_timeline(project, timeline_name)
+        if not ns_timeline:
+            message = (f"未找到'{timeline_name}' 时间线, 无法确定静音判断阈值。\n"
+                       f"进行时间点精确定位, 可创建'{timeline_name}' 时间线, 并插入从'voiceover'素材中截取的静音底噪样本。\n"
+                       f"回车重新采样'{timeline_name}' 时间线, 或手动输入阈值(整型, 如: 125):")
+            threshold = input(f'\033[33m{message}\033[0m')
+            if isinstance(threshold, int) and threshold > 0:
+                break
+        else:
+            project.SetCurrentTimeline(ns_timeline)
+            tracks = ns_timeline.GetTrackCount('audio')
+            # 获取时间线上全部items
+            items = []
+            for i in range(1, tracks + 1):
+                track_items = ns_timeline.GetItemsInTrack('audio', i)
+                for item in track_items.values():
+                    items.append(item)
 
-    # 获取时间线上全部items
-    items = []
-    for i in range(1, tracks + 1):
-        track_items = ns_timeline.GetItemsInTrack('audio', i)
-        for item in track_items.values():
-            items.append(item)
+            if len(items) == 0:
+                message = (f"未在'{timeline_name}' 时间线上找到静音底噪片段, 无法确定静音判断阈值。\n"
+                       f"进行时间点精确定位, 可在'{timeline_name}' 时间线插入从'voiceover'素材中截取的静音底噪样本。\n"
+                       f"回车重新采样'{timeline_name}' 时间线, 或手动输入阈值(整型, 如: 125):")
+                threshold = input(f'\033[33m{message}\033[0m')
+                if isinstance(threshold, int) and threshold > 0:
+                    break
+            else:
+                # 获取第一个item在素材上的入点和出点
+                in_point = items[0].GetLeftOffset()
+                out_point = items[0].GetRightOffset()
 
-    # 获取第一个item在素材上的入点和出点
-    in_point = items[0].GetLeftOffset()
-    out_point = items[0].GetRightOffset()
+                # 获取item对应的素材clip
+                media_pool_item = items[0].GetMediaPoolItem()
+                # 获取第一个item素材在硬盘上的文件路径
+                wav_file = media_pool_item.GetClipProperty()["File Path"]
 
-    # 获取item对应的素材clip
-    media_pool_item = items[0].GetMediaPoolItem()
-    # 获取第一个item素材在硬盘上的文件路径
-    wav_file = media_pool_item.GetClipProperty()["File Path"]
+                volumes = get_average_volume_per_frame(wav_file, fps)[in_point: out_point]
 
-    volumes = get_average_volume_per_frame(wav_file, fps)[in_point: out_point]
+                threshold = max(volumes)*1.25
+                break
 
-    return (max(volumes)*1.25)
+    return threshold
 
 
-def cut_vo(proj_dir, subtitle, resolve, projectManager, project):
-    clear_screen()
-
+def cut_vo(proj_dir, subtitle, resolve, projectManager, project, accurate=False):
+    
     frameRate = project.GetSetting('timelineFrameRate')
-
-    print('精确比对的结果更准确, 同时可以检查出存在差异的文字, 但需要更多计算时间。')
-    ifaccurate = input('\033[33m是否进行精确比对(y/n)?\033[0m ')
-    accurate = ifaccurate=='y'
 
     # 通过对比文稿的每一行在字幕中的位置, 获取需要切割 vo 的每一行的信息数据
     script_file = get_material_file(proj_dir, 'script')
@@ -150,7 +164,7 @@ def cut_vo(proj_dir, subtitle, resolve, projectManager, project):
 
         vo_file = get_material_file(proj_dir, 'voiceover')[0]
         threshold = get_threshold(project, frameRate)
-        #threshold = int(input('\033[33m进行时间点精确定位, 请输入静音判断阈值(整型, 如：125)：\033[0m'))
+       
         new_frame_points=refine_timestamps(vo_file, frame_points, threshold, 10, 3, frameRate)
         print(frame_points)
         print(new_frame_points)

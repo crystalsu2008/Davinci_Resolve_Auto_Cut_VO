@@ -1,3 +1,7 @@
+__version__ = '0.5.1b'
+__author__ = 'Chris Su'
+
+
 import os
 import textwrap
 from project import cut_vo, get_material_file, setup_proj
@@ -83,5 +87,9 @@ else:
             print("退出程序")
 
         else:
+            clear_screen()
+            print('精确比对的结果更准确, 同时可以检查出存在差异的文字, 但需要更多计算时间。')
+            ifaccurate = input('\033[33m是否进行精确比对(y/n)?\033[0m ')
+            accurate = ifaccurate=='y'
             # Cut Voice Over
-            cut_vo(proj_dir, subtitle, resolve, projectManager, project)
+            cut_vo(proj_dir, subtitle, resolve, projectManager, project, accurate)
